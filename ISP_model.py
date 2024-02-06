@@ -42,8 +42,11 @@ class DistilledVisionTransformer(VisionTransformer):
         self.head_dist.apply(self._init_weights)
 
     def forward_features(self, x):
-
+        
+        x = x.unsqueeze(1)
         B = x.shape[0]
+        print(x.shape)
+
         x = self.patch_embed(x)
 
         cls_tokens = self.cls_token.expand(B, -1, -1)  
@@ -72,8 +75,9 @@ class DistilledVisionTransformer(VisionTransformer):
 
 
 class DNGDataset(Dataset):
-    def __init__(self, image_paths, labels, transform=None):
+    def __init__(self, image_paths, rgb_image_paths, labels, transform=None):
         self.image_paths = image_paths
+        self.rgb_image_paths = rgb_image_paths
         self.labels = self.parse_label_file(labels)
         self.transform = transform
 
@@ -83,12 +87,25 @@ class DNGDataset(Dataset):
     def __getitem__(self, index):
         
         file = os.listdir(self.image_paths)[index]
+        rgb_file = file.split(".")[0] +f'.jpg'
         file_path = os.path.join(self.image_paths, file)
+        rgb_filepath = os.path.join(self.rgb_image_paths, rgb_file)
         
         with rawpy.imread(file_path) as raw:
             image = np.asarray(raw.raw_image).astype(np.float32)
+            image = image.reshape(1, image.shape[0], image.shape[1])
+            image = torch.from_numpy(image).float()
+        
+        
+        with Image.open(rgb_filepath) as rgb_img:
+            rgb_img = rgb_img.convert('RGB')
+            rgb_img = self.transform(rgb_img)
+            
+        if self.transform:
+            image = self.transform(image)
+            rgb_img = self.transform(image)
 
-        return image, self.labels[f'{index:04d}']
+        return image, self.labels[f'{index+1:04d}'], rgb_img
     
     def parse_label_file(self, label_file):
         with open(label_file, 'r') as file:
@@ -111,8 +128,8 @@ transform = transforms.Compose([
 
 train_image_paths = '/home/yzhang63/deit-main/data/S7_ISP_Dataset/medium_dng'
 train_labels = '/home/yzhang63/deit-main/predictions.txt'
-
-train_dataset = DNGDataset(train_image_paths, train_labels, transform=transform)
+rgb_image_paths = '/home/yzhang63/deit-main/data/S7_ISP_Dataset/medium_jpg'
+train_dataset = DNGDataset(train_image_paths, rgb_image_paths, train_labels, transform=transform)
 train_loader = DataLoader(train_dataset, batch_size=10, shuffle=True)
 
 model = DistilledVisionTransformer(
@@ -135,13 +152,13 @@ num_epochs = 10
 pretrained_model.to(device)
 
 for epoch in range(num_epochs):
-    for images, labels in train_loader:
+    for images, labels, rgb_img in train_loader:
         images= images.to(device)
         model.to(device)
         raw_output, raw_dist_output = model(images)
         
         with torch.no_grad():
-            RGB_output = pretrained_model(images)
+            RGB_output = pretrained_model(rgb_img)
         
         loss = kd_loss(raw_output, RGB_output, labels, temperature=4.0, alpha=0.9)
 
