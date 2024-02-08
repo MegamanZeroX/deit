@@ -75,11 +75,12 @@ class DistilledVisionTransformer(VisionTransformer):
 
 
 class DNGDataset(Dataset):
-    def __init__(self, image_paths, rgb_image_paths, labels, transform=None):
+    def __init__(self, image_paths, rgb_image_paths, labels, transform=None, RGB_transforms = None):
         self.image_paths = image_paths
         self.rgb_image_paths = rgb_image_paths
         self.labels = self.parse_label_file(labels)
         self.transform = transform
+        self.RGB_transforms = RGB_transforms
 
     def __len__(self):
         return len(self.image_paths)
@@ -93,17 +94,17 @@ class DNGDataset(Dataset):
         
         with rawpy.imread(file_path) as raw:
             image = np.asarray(raw.raw_image).astype(np.float32)
-            image = image.reshape(1, image.shape[0], image.shape[1])
-            image = torch.from_numpy(image).float()
-        
-        
+            #image = image.reshape(1, image.shape[0], image.shape[1])
+            #image = np.array(image)
+
         with Image.open(rgb_filepath) as rgb_img:
             rgb_img = rgb_img.convert('RGB')
-            rgb_img = self.transform(rgb_img)
+
+        if self.RGB_transforms:
+            rgb_img = self.RGB_transforms(rgb_img)
             
         if self.transform:
             image = self.transform(image)
-            rgb_img = self.transform(image)
 
         return image, self.labels[f'{index+1:04d}'], rgb_img
     
@@ -125,11 +126,16 @@ transform = transforms.Compose([
     transforms.ToTensor(),
 ])
 
+RGB_transforms = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
 
 train_image_paths = '/home/yzhang63/deit-main/data/S7_ISP_Dataset/medium_dng'
 train_labels = '/home/yzhang63/deit-main/predictions.txt'
 rgb_image_paths = '/home/yzhang63/deit-main/data/S7_ISP_Dataset/medium_jpg'
-train_dataset = DNGDataset(train_image_paths, rgb_image_paths, train_labels, transform=transform)
+train_dataset = DNGDataset(train_image_paths, rgb_image_paths, train_labels, transform=transform, RGB_transforms=RGB_transforms)
 train_loader = DataLoader(train_dataset, batch_size=10, shuffle=True)
 
 model = DistilledVisionTransformer(
@@ -167,4 +173,7 @@ for epoch in range(num_epochs):
         optimizer.step()
 
     print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
+
+
+
 
