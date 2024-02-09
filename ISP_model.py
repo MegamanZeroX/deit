@@ -94,7 +94,7 @@ class DNGDataset(Dataset):
         
         with rawpy.imread(file_path) as raw:
             image = np.asarray(raw.raw_image).astype(np.float32)
-            #image = image.reshape(1, image.shape[0], image.shape[1])
+            image = image.reshape(1, image.shape[0], image.shape[1])
             #image = np.array(image)
 
         with Image.open(rgb_filepath) as rgb_img:
@@ -122,8 +122,8 @@ class DNGDataset(Dataset):
         return label_mapping
 
 transform = transforms.Compose([
-    transforms.Resize((256, 256)),  
     transforms.ToTensor(),
+    transforms.Resize((256, 256)),  
 ])
 
 RGB_transforms = transforms.Compose([
@@ -173,7 +173,4 @@ for epoch in range(num_epochs):
         optimizer.step()
 
     print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
-
-
-
 
