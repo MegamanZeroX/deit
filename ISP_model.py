@@ -50,8 +50,6 @@ class DistilledVisionTransformer(VisionTransformer):
 
     def forward_features(self, x):
         
-        if x.shape[-3] == 1:
-            x = x.repeat(1, 3, 1, 1)
         B = x.shape[0]
 
         x = self.patch_embed(x)
@@ -115,7 +113,7 @@ class DNGDataset(Dataset):
             image = torch.from_numpy(image)
             image = F.resize(image, size=(256, 256))
 
-        return image, int(self.labels[f'{index+1:04d}']), rgb_img
+        return image, int(self.labels[file.split(".")[0]]), rgb_img
     
     def parse_label_file(self, label_file):
         with open(label_file, 'r') as file:
@@ -131,7 +129,7 @@ class DNGDataset(Dataset):
         return label_mapping
     
 def load_checkpoint(checkpoint_file, model, optimizer):
-    checkpoint = torch.load(checkpoint_file)
+    checkpoint = torch.load(checkpoint_file, strict = False)
     model.load_state_dict(checkpoint["state_dict"])
     model.to(device)
     optimizer.load_state_dict(checkpoint["optimizer"])
@@ -148,7 +146,7 @@ def calculate_accuracy(outputs, labels):
 def save_checkpoint(state, filename="my_checkpoint.pth.tar"):
     torch.save(state, filename)
 
-def main(output_dir = None, checkpoint = None):
+def main(output_dir = None, checkpoint = None, just_one = None):
     
     training_records = {
         "num_epoch": [],
@@ -156,7 +154,8 @@ def main(output_dir = None, checkpoint = None):
         "cross-entropy loss(hard loss)": [],
         "distillation loss(soft loss)": [],
         "both hard and soft loss": [],
-        "accuracy": [],
+        "train_accuracy": [],
+        "test_accuracy": [],
     }
     record = True 
     learning_rate = 0.001
@@ -174,11 +173,21 @@ def main(output_dir = None, checkpoint = None):
                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ])
 
-    train_image_paths = '/home/yzhang63/deit-main/data/S7_ISP_Dataset/medium_dng'
-    train_labels = '/home/yzhang63/deit-main/predictions.txt'
-    rgb_image_paths = '/home/yzhang63/deit-main/data/S7_ISP_Dataset/medium_jpg'
-    train_dataset = DNGDataset(train_image_paths, rgb_image_paths, train_labels, transform=transform, RGB_transforms=RGB_transforms)
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    train_image_paths = '/data1/HDR+/2016/train/dng'
+    train_labels = '/data1/HDR+/2016/train_labels.txt'
+    train_rgb_image_paths = '/data1/HDR+/2016/train/jpg'
+    train_dataset = DNGDataset(train_image_paths, train_rgb_image_paths, train_labels, transform=transform, RGB_transforms=RGB_transforms)
+    train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True)
+    
+    test_image_paths = '/data1/HDR+/2016/test/dng'
+    test_labels = '/data1/HDR+/2016/test_labels.txt'
+    train_rgb_image_paths = '/data1/HDR+/2016/test/jpg'
+
+    with open(test_labels, 'r') as f:
+        lines = f.read().splitlines()
+    num_test = len(lines)
+    test_dataset = DNGDataset(test_image_paths, train_rgb_image_paths, test_labels, transform=transform, RGB_transforms=RGB_transforms)
+    test_loader = DataLoader(test_dataset, batch_size=num_test)
 
     model = DistilledVisionTransformer(
         img_size=256,  
@@ -187,16 +196,18 @@ def main(output_dir = None, checkpoint = None):
         depth=12,  
         num_heads=12,  
         num_classes=1000,
+        in_chans = 1,
     )
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    num_epochs = 200  
+    num_epochs = 400  
     
     if checkpoint:
         model, optimizer = load_checkpoint(checkpoint, model, optimizer)
 
     pretrained_model.to(device)
     model.to(device)
+    
     for epoch in range(num_epochs):
         #model.train()
         running_loss = 0.0
@@ -235,7 +246,7 @@ def main(output_dir = None, checkpoint = None):
         print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
         print("---")
         
-        if (epoch_accuracy > max_accuracy) and output_dir:
+        if (epoch_accuracy > max_accuracy) and output_dir or just_one:
             print(f"Saving best model with accuracy {epoch_accuracy:.2f}%")
             max_accuracy = epoch_accuracy
             save_checkpoint({
@@ -244,23 +255,46 @@ def main(output_dir = None, checkpoint = None):
                 "accuracy": max_accuracy,
             }, output_dir)
             
-        if record:
             training_records["num_epoch"].append(epoch + 1)
             training_records["learning_rate"].append(learning_rate)
             training_records["cross-entropy loss(hard loss)"].append(epoch_hard_loss)  # Or "Cross-Entropy"/"Distillation" based on your condition
             training_records["distillation loss(soft loss)"].append(epoch_soft_loss)
             training_records["both hard and soft loss"].append(epoch_loss)
-            training_records["accuracy"].append(epoch_accuracy)
+            training_records["train_accuracy"].append(epoch_accuracy)
+            test_acc = get_test_acc(model, train_loader)
+            training_records["test_accuracy"].append(test_acc)
     
     if record:
         save_training_records_to_csv(training_records)
             
-def save_training_records_to_csv(records, filename="training_records.csv"):
+def get_test_acc(model, test_loader):
+    correct = 0
+    total = 0
+    for images, labels, rgb_img in test_loader:
+        images= images.to(device)
+        raw_output, raw_output_dist = model(images)
+        labels = torch.tensor(labels, dtype=torch.long).to(device)
+        
+        with torch.no_grad():
+            rgb_img = rgb_img.to(device)
+            RGB_output = pretrained_model(rgb_img)
+        
+        #sloss, cross_loss, dist_loss = kd_loss(raw_output, RGB_output, labels, temperature=4.0, alpha=0.9)
+
+        accuracy = calculate_accuracy(raw_output, labels)
+        correct += (raw_output.argmax(1) == labels).type(torch.float).sum().item()
+        total += labels.size(0)
+    accuracy = 100 * correct / total
+    return accuracy
+    
+
+def save_training_records_to_csv(records, filename="HDR+_hard_soft.csv"):
     with open(filename, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(records.keys())  # Write the header
         writer.writerows(zip(*records.values()))  # Write the rows
+        
 
 if __name__ == '__main__':
-    save_path = "/home/yzhang63/deit-main/checkpoint.pth"
-    main(save_path, None)
+    save_path = "/home/yzhang63/deit-main/HDR+_hard_soft.pth"
+    main(save_path)

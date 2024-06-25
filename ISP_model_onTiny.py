@@ -51,11 +51,9 @@ class DistilledVisionTransformer(VisionTransformer):
         trunc_normal_(self.pos_embed, std=.02)
         
         self.head_dist.apply(self._init_weights)
-
-    def forward_features(self, x):
         
-        if x.shape[-3] == 1:
-            x = x.repeat(1, 3, 1, 1)
+    def forward_features(self, x):
+ 
         B = x.shape[0]
 
         x = self.patch_embed(x)
@@ -135,7 +133,7 @@ class DNGDataset(Dataset):
         return label_mapping
     
 def load_checkpoint(checkpoint_file, model, optimizer):
-    checkpoint = torch.load(checkpoint_file)
+    checkpoint = torch.load(checkpoint_file, strict = False)
     model.load_state_dict(checkpoint["state_dict"])
     model.to(device)
     optimizer.load_state_dict(checkpoint["optimizer"])
@@ -200,14 +198,14 @@ def main(outputModelName = None, checkpoint = None, just_one = None, trainable_b
 
     #tiny
     model = DistilledVisionTransformer(
-        patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
+        patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True, in_chans = 1,
         norm_layer=partial(nn.LayerNorm, eps=1e-6))
     model.default_cfg = _cfg()
     
     
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    num_epochs = 500  
+    num_epochs = 1200  
     
     logging.basicConfig(level=logging.INFO)
     log = logging.getLogger(__name__)
@@ -314,11 +312,8 @@ def save_training_records_to_csv(records,  config = None, filePath = None):
 
 if __name__ == '__main__':
     
-    model_name = ["HDR+tiny_head_hard","HDR+tiny_cls_token_hard","HDR+tiny_pos_embed_hard", "HDR+tiny_patch_embed_hard"]
+    model_name = ["HDR+tiny_patch_embed_hard"]
     configurations = [
-        ['head'],  
-        ['cls_token'],
-        ['pos_embed'],
         ['patch_embed']
     ]
     
